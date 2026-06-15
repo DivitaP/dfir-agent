@@ -60,7 +60,7 @@ Memory Image (.raw)
 
 ---
 
-![Architecture](docs/architecture.png)
+![Architecture](./architecture-diagram.png)
 
 ---
 
