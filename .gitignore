@@ -1,0 +1,7 @@
+samples/
+evidence/
+venv/
+__pycache__/
+.DS_Store
+*.raw
+*.7z
