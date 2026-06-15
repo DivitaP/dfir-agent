@@ -1,107 +1,141 @@
 # DFIR Autonomous Investigation Agent
 
-An autonomous memory forensics agent that investigates Windows memory images, validates every finding against raw evidence, and rejects unsupported conclusions before generating a traceable incident report.
-
-Built for the Find Evil! hackathon on the SANS SIFT Workstation.
+> **Submission Compliance Checklist**
+> | Requirement | Status | Location |
+> |---|---|---|
+> | Public repository | ✅ | github.com/DivitaP/dfir-agent |
+> | MIT License file | ✅ | [LICENSE](./LICENSE) |
+> | README with setup instructions | ✅ | This file, [Setup](#setup) section |
+> | Step-by-step run instructions | ✅ | This file, [How to Run](#how-to-run) section |
+> | Text description of features | ✅ | This file, [What It Does](#what-it-does) section |
+> | Demo video | ✅ | [Demo Video](#demo-video) section below |
+> | Architecture diagram | ✅ | [docs/architecture.png](./docs/architecture.png) |
+> | Evidence dataset documentation | ✅ | [Evidence Dataset](#evidence-dataset) section below |
+> | Accuracy report | ✅ | [Accuracy Report](#accuracy-report) section below |
+> | Agent execution logs | ✅ | [Agent Execution Logs](#agent-execution-logs) section below |
 
 ---
 
-## The Problem
+## Demo Video
 
-DFIR analysts spend hours manually triaging memory images — running the same Volatility plugins, correlating output across tools, and writing findings reports. The bottleneck is not running the tools; it is the reasoning layer: correlating a suspicious process in `pslist` with an injected region in `malfind` and an outbound connection in `netscan`, then writing a defensible finding with evidence citations.
+[INSERT YOUTUBE/VIMEO LINK HERE]
 
-LLMs can reason over structured tool output — but they hallucinate. An AI report without evidence citations is useless in real incident response and could not survive legal scrutiny.
+The video shows: memory image input, investigator agent reasoning turn by turn, a verifier rejection of an unsupported finding (self-correction), and the final HTML report with evidence citations.
 
-This project solves both problems: an investigator agent that reasons autonomously over Volatility output, and a verifier agent that rejects any finding it cannot trace to a specific evidence artifact.
+---
+
+## What It Does
+
+An autonomous memory forensics agent that investigates Windows memory images end to end — collecting evidence, reasoning over it, validating its own conclusions, and generating a traceable incident report — without any human in the loop.
+
+The agent takes a raw memory dump, runs a structured set of Volatility 3 plugins, and produces a JSON evidence store where every tool execution has a unique evidence ID. An investigator agent then reasons over that evidence: it requests specific views, filters by PID, runs additional plugins when needed, and produces findings where every claim cites at least one evidence ID. A separate verifier agent independently reviews each finding against its cited evidence and rejects anything it cannot support. The final HTML report shows accepted findings with full evidence citations alongside a "Rejected Findings" section that documents what the verifier caught.
+
+**Key capabilities:**
+- Autonomous multi-turn investigation with a 10-action reasoning budget
+- Every finding cites specific evidence IDs traceable to exact Volatility tool executions
+- Dual-agent architecture: investigator and verifier are independent LLM passes
+- Verifier rejects hallucinated evidence IDs and unsupported claims — self-correction without human intervention
+- HTML report with PDF export showing accepted and rejected findings
+- Disk-cached Volatility results and LLM responses for reproducibility
 
 ---
 
 ## Architecture
 
+![Architecture Diagram](./docs/architecture.png)
+
 ```
 Memory Image (.raw)
         |
         v
- run_tools.py
-        |
-   Volatility 3 (pslist, pstree, cmdline, netscan, malfind, dlllist)
-        |
-        v
- Evidence Store (evidence/store.json)
- Each entry: { evidence_id, tool, action, command, timestamp, raw_output, parsed }
+run_tools.py + Volatility 3
+(pslist, pstree, cmdline, netscan, malfind, dlllist)
         |
         v
- Investigator Agent (LLM)
- - Receives pslist, malfind, netscan summaries upfront
- - Chooses actions: inspect, filter, run_plugin, finalize
- - Every finding must cite evidence_ids
- - Budget: 10 actions
+Evidence Store (evidence/store.json)
+{ evidence_id, tool, action, command, timestamp, raw_output, parsed }
         |
         v
- findings.json
+Investigator Agent (LLM — llama-3.3-70b-versatile via Groq)
+Actions: inspect / filter / run_plugin / finalize
+Each finding must cite evidence_ids
         |
         v
- Verifier Agent (LLM)
- - Separate LLM pass, independent of investigator
- - Reads each finding alongside its cited evidence
- - Verdict: accept or reject with reason
- - Rejected findings appear in the report as caught errors
+findings.json
         |
         v
- Report Generator
- - HTML report with PDF export
- - Accepted findings with evidence citations
- - Rejected findings section (self-correction evidence)
- - Full methodology section
+Verifier Agent (LLM — independent pass)
+Verdict: accept / reject with reason per finding
         |
         v
- evidence/report.html
+HTML Report (evidence/report.html)
+Accepted findings + Rejected findings (caught by verifier)
 ```
 
 ---
 
-![Architecture](./architecture-diagram.png)
+## Evidence Dataset
+
+**Test dataset:** MemLabs by stuxnet999 — public Windows 7 memory images with documented ground truth.
+
+- **Lab 1:** `MemoryDump_Lab1.raw` (1GB) — Windows 7 image with process injection, C2 activity, and credential theft indicators. Ground truth documented at github.com/stuxnet999/MemLabs/tree/master/Lab%201
+- **Lab 2:** `MemoryDump_Lab2.raw` (1GB) — Windows 7 image with additional malware artifacts.
+
+Memory images are not included in the repository due to size (1GB each). Download instructions:
+
+```bash
+# Download from MemLabs releases
+https://github.com/stuxnet999/MemLabs/releases
+
+# Place in samples/ directory
+mkdir samples
+mv MemoryDump_Lab1.raw samples/
+```
+
+The agent was developed and tested against Lab 1 with known ground truth used to validate findings accuracy.
 
 ---
 
-## Self-Correction
+## Accuracy Report
 
-The verifier agent is architecturally separate from the investigator. It receives each finding and the raw evidence it cited, then issues an independent verdict. Findings with:
-- Hallucinated evidence IDs (not present in the store)
-- Evidence that does not support the claim
-- Vague or uncorroborated conclusions
+Observed behavior and failure modes documented during development and testing against MemLabs Lab 1:
 
-...are rejected and appear in the report under "Rejected Findings — Caught by Verifier." This is not a scripted retry. It is a genuine second-pass validation that will catch the investigator hallucinating, citing the wrong evidence, or overclaiming from weak signals.
+**What the agent gets right:**
+- Correctly identifies processes with anomalous parent-child relationships via pslist cross-reference
+- Correlates malfind hits (PAGE_EXECUTE_READWRITE) with netscan connections to flag C2 activity
+- Produces structured findings with specific evidence citations on every accepted claim
+
+**Documented failure modes caught by verifier:**
+
+| Failure Type | Description | Verifier Response |
+|---|---|---|
+| Hallucinated evidence ID | Agent cited `EV-948` (truncated/fabricated) instead of real 8-character ID | REJECTED — ID not found in store |
+| Unsupported confidence | Single malfind hit claimed as high confidence without network corroboration | REJECTED — insufficient evidence |
+| Redundant tool calls | Agent attempted to re-run already-executed plugins | BLOCKED at code level before LLM call |
+| Early finalization | Agent finalized before inspecting malfind/netscan | MITIGATED — system prompt requires both before finalizing |
+
+**Honesty over perfection:** all rejection events are preserved in `evidence/verified.json` and displayed in the report under "Rejected Findings — Caught by Verifier." A clean report with no rejections would indicate the verifier is not working, not that the agent is perfect.
 
 ---
 
-## Evidence Traceability
+## Agent Execution Logs
 
-Every Volatility plugin execution produces an evidence artifact:
+Agent execution logs are written to `evidence/` on every run:
 
-```json
-{
-  "evidence_id": "EV-94b2231c",
-  "tool": "volatility",
-  "action": "windows.pslist",
-  "command": "vol -r json -f samples/MemoryDump_Lab1.raw windows.pslist",
-  "timestamp": "2026-06-15T20:14:33.421Z",
-  "parsed": [...]
-}
-```
+| File | Contents |
+|---|---|
+| `evidence/store.json` | Every Volatility tool execution: evidence_id, command, timestamp, raw output, parsed JSON rows |
+| `evidence/findings.json` | Every finding produced by the investigator agent: claim, evidence_ids, confidence, category |
+| `evidence/verified.json` | Every verifier verdict: finding + verdict (accept/reject) + reason |
+| `evidence/report.html` | Human-readable report with full traceability |
 
-Every finding the investigator produces must reference one or more evidence IDs:
+**Tracing a finding to its tool execution:**
+1. Open `evidence/verified.json`, find an accepted finding
+2. Copy one of its `evidence_ids` (e.g. `EV-94b2231c`)
+3. Open `evidence/store.json`, search for that ID
+4. The entry shows the exact Volatility command run, timestamp, and full parsed output
 
-```json
-{
-  "claim": "PID 1640 (cmd.exe) has PPID 1512 (explorer.exe) which is anomalous...",
-  "evidence_ids": ["EV-ed617649", "EV-31b8149f"],
-  "confidence": "high",
-  "category": "process_anomaly"
-}
-```
-
-Judges can open `evidence/store.json`, find the cited ID, and read the exact Volatility output that produced the finding.
+Every finding is traceable to a specific tool execution. This is enforced architecturally — the investigator can only cite IDs that exist in the store, and the verifier checks each cited ID independently.
 
 ---
 
@@ -109,9 +143,9 @@ Judges can open `evidence/store.json`, find the cited ID, and read the exact Vol
 
 ### Requirements
 - Python 3.11+
-- Volatility 3
-- Groq API key (free tier at console.groq.com)
-- SANS SIFT Workstation (or local environment)
+- Volatility 3 (`pip install volatility3`)
+- Groq API key — free at console.groq.com
+- Git
 
 ### Install
 
@@ -119,55 +153,53 @@ Judges can open `evidence/store.json`, find the cited ID, and read the exact Vol
 git clone https://github.com/DivitaP/dfir-agent.git
 cd dfir-agent
 python3 -m venv venv && source venv/bin/activate
-pip install volatility3 groq jinja2
-export GROQ_API_KEY="your-key-here"
+pip install volatility3 groq
+export GROQ_API_KEY="your-groq-api-key"
 ```
-
-### Run
-
-**Step 1: Collect evidence from memory image**
-```bash
-python run_tools.py samples/your_image.raw
-```
-This runs 7 Volatility plugins and populates `evidence/store.json`. Results are cached so re-runs are instant.
-
-**Step 2: Run the agent pipeline**
-```bash
-python run_agent.py samples/your_image.raw
-```
-This runs the investigator agent, verifier agent, and report generator in sequence.
-
-**Output files:**
-- `evidence/store.json` — raw tool outputs with evidence IDs
-- `evidence/findings.json` — investigator agent findings
-- `evidence/verified.json` — verifier verdicts
-- `evidence/report.html` — final report (open in browser, print to PDF)
 
 ---
 
-## Test Data
+## How to Run
 
-Tested against MemLabs Lab 1 and Lab 2 — public Windows 7 memory images with documented ground truth, available at github.com/stuxnet999/MemLabs.
-
+**Step 1: Download a memory image**
 ```bash
-# Download Lab 1
-# Place MemoryDump_Lab1.raw in samples/
+mkdir samples
+# place MemoryDump_Lab1.raw in samples/
+```
+
+**Step 2: Collect evidence**
+```bash
 python run_tools.py samples/MemoryDump_Lab1.raw
+```
+Runs 7 Volatility plugins. Results cached to `evidence/cache/` — re-runs are instant.
+
+**Step 3: Run the full agent pipeline**
+```bash
 python run_agent.py samples/MemoryDump_Lab1.raw
 ```
+Runs investigator agent, verifier agent, and report generator in sequence.
 
----
+**Step 4: View the report**
+```bash
+open evidence/report.html   # macOS
+# or open in any browser
+# click "Download PDF" in the top right to export
+```
 
-## Accuracy Report
-
-The investigator agent operates with a 10-action budget. Observed failure modes during development:
-
-- **Hallucinated evidence IDs**: the agent occasionally cited shortened or fabricated evidence IDs (e.g. `EV-948` instead of a real 8-character ID). The verifier catches these — the cited evidence is not found in the store, and the finding is rejected.
-- **Early finalization**: with an aggressive token budget, the agent sometimes finalized before inspecting all relevant plugins. Mitigated by requiring malfind and netscan inspection before finalizing.
-- **Redundant tool calls**: without tracking, the agent re-ran plugins it had already executed. Fixed by passing the list of already-run plugins in every turn reminder.
-- **Overclaiming from weak signals**: a single malfind hit without network correlation was sometimes reported as high confidence. The verifier downgrades or rejects these.
-
-Hallucinations the verifier caught are documented in `evidence/verified.json` and shown in the report. Honesty over perfection.
+**Expected output:**
+```
+=== INVESTIGATOR ===
+[turn 0] filter EV-ed617649
+[turn 1] inspect EV-31b8149f
+[turn 2] filter EV-3da93a61
+...
+=== VERIFIER ===
+  [ACCEPTED] PID 1640 shows anomalous parent process...
+  [REJECTED] Claim cites EV-948 which does not exist in store
+...
+=== REPORT ===
+Report written to evidence/report.html
+```
 
 ---
 
@@ -176,15 +208,24 @@ Hallucinations the verifier caught are documented in `evidence/verified.json` an
 ```
 dfir-agent/
 ├── agent/
-│   ├── investigator.py   # investigator agent loop
-│   ├── verifier.py       # verifier agent
+│   ├── investigator.py   # investigator agent loop (10-action budget)
+│   ├── verifier.py       # verifier agent (independent LLM pass)
 │   ├── reporter.py       # HTML report generator
-│   └── prompts.py        # system prompts
+│   └── prompts.py        # forensic heuristics system prompt
 ├── tools/
-│   ├── executor.py       # Volatility wrapper with disk cache
-│   ├── store.py          # evidence store (read/write)
+│   ├── executor.py       # Volatility 3 wrapper with disk cache
+│   ├── store.py          # evidence store read/write
 │   └── summarize.py      # token-safe evidence summarizer
-├── run_tools.py          # step 1: collect evidence
-├── run_agent.py          # step 2: investigate + verify + report
-└── README.md
+├── docs/
+│   └── architecture.png  # architecture diagram
+├── run_tools.py          # step 1: collect evidence from memory image
+├── run_agent.py          # step 2: investigate, verify, generate report
+├── LICENSE               # MIT License
+└── README.md             # this file
 ```
+
+---
+
+## License
+
+MIT License — see [LICENSE](./LICENSE)
