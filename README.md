@@ -18,9 +18,9 @@
 
 ## Demo Video
 
-[INSERT YOUTUBE/VIMEO LINK HERE]
+[\[INSERT YOUTUBE LINK HERE\]](https://youtu.be/rTGfSVvpBLg)
 
-The video shows: memory image input, investigator agent reasoning turn by turn, a verifier rejection of an unsupported finding (self-correction), and the final HTML report with evidence citations.
+The video shows: the dataset, the dual-agent architecture, a live run of the pipeline, the verifier independently rejecting unsupported findings (self-correction), the traceable HTML report, and an honest walkthrough of current limitations.
 
 ---
 
@@ -56,7 +56,7 @@ Evidence Store (evidence/store.json)
 { evidence_id, tool, action, command, timestamp, raw_output, parsed }
         |
         v
-Investigator Agent (LLM — llama-3.3-70b-versatile via Groq)
+Investigator Agent (LLM — llama-3.1-8b-instant via Groq)
 Actions: inspect / filter / run_plugin / finalize
 Each finding must cite evidence_ids
         |
@@ -76,12 +76,14 @@ Accepted findings + Rejected findings (caught by verifier)
 
 ## Evidence Dataset
 
-**Test dataset:** MemLabs by stuxnet999 — public Windows 7 memory images with documented ground truth.
+**Test dataset:** MemLabs by stuxnet999 — public Windows 7 memory images with documented ground truth, widely used in the DFIR community for training and tool validation.
 
-- **Lab 1:** `MemoryDump_Lab1.raw` (1GB) — Windows 7 image with process injection, C2 activity, and credential theft indicators. Ground truth documented at github.com/stuxnet999/MemLabs/tree/master/Lab%201
-- **Lab 2:** `MemoryDump_Lab2.raw` (1GB) — Windows 7 image with additional malware artifacts.
+- **Lab 1:** `MemoryDump_Lab1.raw` (1GB) — Windows 7 image containing process injection and suspicious network activity. Ground truth documented at github.com/stuxnet999/MemLabs/tree/master/Lab%201
+- **Lab 2:** `MemoryDump_Lab2.raw` (1GB) — secondary Windows 7 image used to confirm the pipeline generalizes.
 
-Memory images are not included in the repository due to size (1GB each). Download instructions:
+Because the ground truth is publicly documented, any judge can download the same image, run the agent, and check its findings against the known answers without needing proprietary case data.
+
+Memory images are not included in the repository due to size (1GB each):
 
 ```bash
 # Download from MemLabs releases
@@ -92,27 +94,29 @@ mkdir samples
 mv MemoryDump_Lab1.raw samples/
 ```
 
-The agent was developed and tested against Lab 1 with known ground truth used to validate findings accuracy.
-
 ---
 
 ## Accuracy Report
 
-Observed behavior and failure modes documented during development and testing against MemLabs Lab 1:
+Tested against MemLabs Lab 1.
 
-**What the agent gets right:**
-- Correctly identifies processes with anomalous parent-child relationships via pslist cross-reference
-- Correlates malfind hits (PAGE_EXECUTE_READWRITE) with netscan connections to flag C2 activity
-- Produces structured findings with specific evidence citations on every accepted claim
+**What works today:**
+- The full pipeline runs end to end: evidence collection, autonomous investigation, independent verification, and report generation.
+- Every finding carries evidence IDs traceable to a specific Volatility command in the evidence store.
+- The verifier independently reviews each finding against its cited evidence and rejects unsupported claims with specific, substantive reasoning.
 
-**Documented failure modes caught by verifier:**
+**Current limitation (stated honestly):**
+The investigator currently runs on the lightweight `llama-3.1-8b-instant` model due to free-tier API budget constraints. At this model size the investigator produces weak findings, and in test runs the verifier correctly rejected all of them. This is not the verifier failing — it is the verifier working. A run that rejected every weak finding demonstrates that the self-correction layer holds even when the investigator underperforms. The verifier architecture is model-independent; a stronger investigator model produces better-grounded findings without any change to the verification logic.
 
-| Failure Type | Description | Verifier Response |
+**Documented failure modes and how they are handled:**
+
+| Failure Type | Description | Response |
 |---|---|---|
-| Hallucinated evidence ID | Agent cited `EV-948` (truncated/fabricated) instead of real 8-character ID | REJECTED — ID not found in store |
-| Unsupported confidence | Single malfind hit claimed as high confidence without network corroboration | REJECTED — insufficient evidence |
-| Redundant tool calls | Agent attempted to re-run already-executed plugins | BLOCKED at code level before LLM call |
-| Early finalization | Agent finalized before inspecting malfind/netscan | MITIGATED — system prompt requires both before finalizing |
+| Hallucinated evidence ID | Agent cited a truncated/fabricated ID (e.g. `EV-948`) | REJECTED — ID not found in store |
+| Unsupported confidence | Single weak signal claimed as high confidence without corroboration | REJECTED — insufficient evidence |
+| Overclaimed correlation | Claimed one PID in both malfind and netscan; evidence showed multiple uncorrelated PIDs | REJECTED — verifier checked against raw rows |
+| Redundant tool calls | Agent attempted to re-run already-executed plugins | BLOCKED at code level before the LLM call |
+| Investigator looping | 8B model repeats filter actions across turns | Known issue, tracked in limitations |
 
 **Honesty over perfection:** all rejection events are preserved in `evidence/verified.json` and displayed in the report under "Rejected Findings — Caught by Verifier." A clean report with no rejections would indicate the verifier is not working, not that the agent is perfect.
 
@@ -130,7 +134,7 @@ Agent execution logs are written to `evidence/` on every run:
 | `evidence/report.html` | Human-readable report with full traceability |
 
 **Tracing a finding to its tool execution:**
-1. Open `evidence/verified.json`, find an accepted finding
+1. Open `evidence/verified.json`, pick any finding
 2. Copy one of its `evidence_ids` (e.g. `EV-94b2231c`)
 3. Open `evidence/store.json`, search for that ID
 4. The entry shows the exact Volatility command run, timestamp, and full parsed output
@@ -171,7 +175,7 @@ mkdir samples
 ```bash
 python run_tools.py samples/MemoryDump_Lab1.raw
 ```
-Runs 7 Volatility plugins. Results cached to `evidence/cache/` — re-runs are instant.
+Runs Volatility plugins and populates `evidence/store.json`. Results are cached to `evidence/cache/`, so re-runs are instant.
 
 **Step 3: Run the full agent pipeline**
 ```bash
@@ -182,24 +186,37 @@ Runs investigator agent, verifier agent, and report generator in sequence.
 **Step 4: View the report**
 ```bash
 open evidence/report.html   # macOS
-# or open in any browser
 # click "Download PDF" in the top right to export
 ```
 
-**Expected output:**
+**Example output (from a real run):**
 ```
 === INVESTIGATOR ===
 [turn 0] filter EV-ed617649
-[turn 1] inspect EV-31b8149f
-[turn 2] filter EV-3da93a61
+[turn 1] run_plugin windows.cmdline
+[turn 2] filter EV-72fad94b
 ...
+Produced 3 findings
+
 === VERIFIER ===
-  [ACCEPTED] PID 1640 shows anomalous parent process...
-  [REJECTED] Claim cites EV-948 which does not exist in store
-...
+  [REJECTED] Suspicious process with non-shell parent PID
+           Reason: cited evidence shows typical system process behavior, does not support the claim
+  [REJECTED] High confidence C2 activity (PID in both malfind and netscan)
+           Reason: evidence shows multiple uncorrelated PIDs, contradicts single-PID claim
+  [REJECTED] Process running from user directory
+           Reason: process list shows system directory paths, does not support the claim
+
 === REPORT ===
 Report written to evidence/report.html
 ```
+
+The verifier rejecting weak findings is the system working as designed. See the [Accuracy Report](#accuracy-report) for the full explanation.
+
+---
+
+## Implementation Note — Tool Orchestration
+
+This project implements a Python-native agentic loop rather than MCP for tool orchestration. The investigator agent autonomously decides which Volatility 3 plugins to invoke, in what sequence, and with what parameters, based on evidence accumulated across turns — satisfying the "comparable agentic framework" provision in the rules. Direct subprocess calls were chosen to keep tight control over evidence ID assignment, token-safe output summarization, and the caching layer that makes runs reproducible. The dual-agent self-correction mechanism and evidence traceability are fully implemented regardless of transport layer.
 
 ---
 
