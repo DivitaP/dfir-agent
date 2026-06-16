@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DFIR Agent — Demo Slides</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0a0a0a; color: #e5e7eb; }
+  .deck { max-width: 1000px; margin: 0 auto; }
+  .slide {
+    min-height: 100vh; padding: 64px; display: flex; flex-direction: column;
+    justify-content: center; border-bottom: 1px solid #1f1f1f; scroll-snap-align: start;
+  }
+  .num { font-size: 13px; color: #3b82f6; font-weight: 700; letter-spacing: 0.1em; margin-bottom: 16px; }
+  h1 { font-size: 44px; font-weight: 800; color: #f9fafb; line-height: 1.1; margin-bottom: 20px; }
+  h2 { font-size: 32px; font-weight: 700; color: #f9fafb; margin-bottom: 24px; }
+  p { font-size: 18px; line-height: 1.6; color: #cbd5e1; margin-bottom: 14px; max-width: 760px; }
+  .big { font-size: 24px; color: #e5e7eb; }
+  ul { list-style: none; margin: 16px 0; }
+  li { font-size: 18px; line-height: 1.7; color: #cbd5e1; padding-left: 28px; position: relative; margin-bottom: 10px; }
+  li::before { content: "▸"; position: absolute; left: 0; color: #3b82f6; font-weight: 700; }
+  .accent { color: #3b82f6; font-weight: 600; }
+  .green { color: #22c55e; }
+  .red { color: #ef4444; }
+  .amber { color: #f59e0b; }
+  code { background: #1e293b; padding: 2px 8px; border-radius: 4px; font-size: 15px; color: #93c5fd; font-family: monospace; }
+  .box { background: #141414; border: 1px solid #262626; border-radius: 12px; padding: 24px; margin: 12px 0; }
+  .flow { display: flex; flex-direction: column; gap: 10px; margin: 20px 0; }
+  .step { background: #141414; border: 1px solid #262626; border-radius: 10px; padding: 16px 20px; font-size: 17px; }
+  .step .label { color: #64748b; font-size: 13px; display: block; margin-bottom: 4px; }
+  .arrow { text-align: center; color: #3b82f6; font-size: 20px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .nav { position: fixed; bottom: 20px; right: 20px; font-size: 13px; color: #475569; background: #141414; padding: 8px 14px; border-radius: 8px; border: 1px solid #262626; }
+  .tag { display: inline-block; background: #1e293b; color: #93c5fd; padding: 4px 12px; border-radius: 6px; font-size: 14px; margin: 4px 6px 4px 0; }
+</style>
+</head>
+<body>
+<div class="deck">
+
+  <section class="slide">
+    <div class="num">FIND EVIL · SOLO SUBMISSION</div>
+    <h1>DFIR Autonomous<br>Investigation Agent</h1>
+    <p class="big">An AI memory forensics system that <span class="accent">validates its own findings</span> and refuses to present conclusions it can't prove.</p>
+    <p style="color:#64748b; margin-top:20px;">Divita Phadakale</p>
+  </section>
+
+  <section class="slide">
+    <div class="num">01 · THE PROBLEM</div>
+    <h2>LLMs hallucinate. Forensics can't afford it.</h2>
+    <p>Most AI forensics tools wrap a tool like Volatility around an LLM and trust whatever comes out.</p>
+    <p>But in a real investigation, a <span class="red">confident wrong answer</span> is worse than no answer. It can't survive scrutiny, and it can derail a case.</p>
+    <div class="box">
+      <p style="margin:0;" class="big">The question I built around:<br><span class="accent">What if the system didn't trust its own LLM?</span></p>
+    </div>
+  </section>
+
+  <section class="slide">
+    <div class="num">02 · ARCHITECTURE</div>
+    <h2>A dual-agent pipeline</h2>
+    <div class="flow">
+      <div class="step"><span class="label">INPUT</span>Windows memory image (.raw)</div>
+      <div class="arrow">↓</div>
+      <div class="step"><span class="label">EVIDENCE COLLECTION</span>Volatility 3 — pslist, malfind, netscan, cmdline, dlllist<br><span style="color:#64748b;font-size:14px;">Every execution stored with a unique evidence ID + command + timestamp</span></div>
+      <div class="arrow">↓</div>
+      <div class="step"><span class="label">INVESTIGATOR AGENT</span>Reasons over evidence, chooses tools autonomously, cites evidence IDs on every finding</div>
+      <div class="arrow">↓</div>
+      <div class="step"><span class="label">VERIFIER AGENT</span>Independently checks each finding against cited evidence — accept or reject</div>
+      <div class="arrow">↓</div>
+      <div class="step"><span class="label">OUTPUT</span>HTML report — accepted + rejected findings, fully traceable</div>
+    </div>
+  </section>
+
+  <section class="slide">
+    <div class="num">03 · THE KEY IDEA</div>
+    <h2>The verifier is independent</h2>
+    <p>The verifier agent never sees the investigator's reasoning. It receives only two things:</p>
+    <ul>
+      <li>The <span class="accent">claim</span> being made</li>
+      <li>The <span class="accent">raw evidence</span> that claim cited</li>
+    </ul>
+    <p>It has no incentive to confirm the investigator. Like peer review, the reviewer doesn't know what answer the author wanted, only whether the evidence supports it.</p>
+    <div class="box">
+      <p style="margin:0;">This is what makes the self-correction <span class="green">real</span>, not a scripted retry with a staged error.</p>
+    </div>
+  </section>
+
+  <section class="slide">
+    <div class="num">04 · EVIDENCE TRACEABILITY</div>
+    <h2>Every finding traces to a tool execution</h2>
+    <p>Each finding cites evidence IDs. Each ID maps to an exact entry in the evidence store:</p>
+    <div class="box">
+      <p style="margin:0; font-family:monospace; font-size:14px; color:#93c5fd;">
+        evidence_id: "EV-94b2231c"<br>
+        command: "vol -r json -f image.raw windows.pslist"<br>
+        timestamp: "2026-06-16T01:27:33Z"<br>
+        parsed: [ ... ]
+      </p>
+    </div>
+    <p>A judge can take any finding, find the cited ID in <code>store.json</code>, and read the exact command and output that produced it. <span class="accent">Nothing is unverifiable.</span></p>
+  </section>
+
+  <section class="slide">
+    <div class="num">05 · LIVE RESULT</div>
+    <h2>The verifier caught all three</h2>
+    <div class="two">
+      <div class="box" style="text-align:center;"><div style="font-size:40px;font-weight:800;" class="red">3</div><div style="color:#64748b;">findings proposed</div></div>
+      <div class="box" style="text-align:center;"><div style="font-size:40px;font-weight:800;" class="red">3</div><div style="color:#64748b;">rejected by verifier</div></div>
+    </div>
+    <p>Example rejection, verbatim from the run:</p>
+    <div class="box">
+      <p style="margin:0; font-size:16px;"><span class="red">REJECTED</span> — "Claim states a single PID appears in both malfind and netscan, but the evidence shows multiple different PIDs that don't correlate."</p>
+    </div>
+    <p>The investigator overclaimed. The verifier checked it against the raw data and refused to sign off. <span class="accent">That's the system working.</span></p>
+  </section>
+
+  <section class="slide">
+    <div class="num">06 · HONEST LIMITATIONS</div>
+    <h2>What's working, what isn't</h2>
+    <div class="two">
+      <div>
+        <p class="green" style="font-weight:700;">Working</p>
+        <ul>
+          <li>Full autonomous pipeline end to end</li>
+          <li>Evidence ID traceability on every claim</li>
+          <li>Independent verifier with substantive reasoning</li>
+          <li>Reproducible via disk + LLM caching</li>
+        </ul>
+      </div>
+      <div>
+        <p class="amber" style="font-weight:700;">Not yet</p>
+        <ul>
+          <li>Running 8B model on free budget, makes weak findings</li>
+          <li>Investigator loops on repeat filters</li>
+          <li>No re-investigation after rejection</li>
+          <li>Direct tool calls, not MCP transport</li>
+        </ul>
+      </div>
+    </div>
+    <p style="margin-top:20px;">The verifier architecture is the contribution, and it holds regardless of which model sits behind it.</p>
+  </section>
+
+  <section class="slide">
+    <div class="num">07 · WHAT'S NEXT</div>
+    <h2>Where this goes</h2>
+    <ul>
+      <li>Ground investigator heuristics in actual evidence rows, not heuristic names</li>
+      <li>Feedback loop, rejected findings get re-investigated instead of dropped</li>
+      <li>Stronger model for the investigator, the verifier already discriminates well</li>
+      <li>MCP transport for standard SIFT tool integration</li>
+    </ul>
+    <div class="box" style="margin-top:24px;">
+      <p style="margin:0;" class="big">The core idea works today:<br><span class="accent">AI forensics that validates itself and won't present what it can't prove.</span></p>
+    </div>
+  </section>
+
+  <section class="slide">
+    <div class="num">THANK YOU</div>
+    <h1>Honest findings over<br>confident hallucinations.</h1>
+    <p style="margin-top:20px;">github.com/DivitaP/dfir-agent</p>
+  </section>
+
+</div>
+<div class="nav">Scroll to advance · Print to PDF for slides</div>
+</body>
+</html>

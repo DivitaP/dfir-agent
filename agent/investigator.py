@@ -3,7 +3,7 @@ from groq import Groq
 from tools.summarize import summarize, store_overview, filter_rows
 from tools.executor import run_vol
 
-MODEL = "llama-3.3-70b-versatile"
+MODEL = "llama-3.1-8b-instant"
 MAX_TURNS = 10
 LLM_CACHE_DIR = "evidence/llm_cache"
 os.makedirs(LLM_CACHE_DIR, exist_ok=True)
@@ -40,50 +40,49 @@ def cached_llm_call(messages, temperature=0.1):
 def investigate(image, store, system_prompt):
     inspected = []
 
+    # Minimal initial payload: overview + pslist only. Agent requests malfind/netscan via inspect.
     initial = {
         "overview": store_overview(store),
         "pslist": summarize(
             next(e for e in store.items if e["action"] == "windows.pslist"),
-            max_rows=15,
-            fields=["PID", "PPID", "ImageFileName"],
+            max_rows=12, fields=["PID", "PPID", "ImageFileName"],
         ),
-        "malfind_summary": summarize(
+        "malfind": summarize(
             next(e for e in store.items if e["action"] == "windows.malfind"),
-            max_rows=10,
-            fields=["PID", "Process", "Protection", "Hexdump"],
+            max_rows=8, fields=["PID", "Process", "Protection"],
         ),
-        "netscan_summary": summarize(
+        "netscan": summarize(
             next(e for e in store.items if e["action"] == "windows.netscan"),
-            max_rows=10,
-            fields=["PID", "Proto", "LocalAddr", "LocalPort", "ForeignAddr", "ForeignPort", "State", "Owner"],
+            max_rows=8, fields=["PID", "ForeignAddr", "State", "Owner"],
         ),
     }
     inspected += [e["evidence_id"] for e in store.items
                   if e["action"] in ("windows.pslist", "windows.malfind", "windows.netscan")]
 
-    history = [{"role": "user", "content": json.dumps(initial)}]
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": json.dumps(initial)},
+    ]
 
     for turn in range(MAX_TURNS):
         already_run_plugins = [e["action"] for e in store.items]
         reminder = (
-            f" Already inspected: {inspected}."
-            f" Already run plugins: {already_run_plugins}."
-            f" Do NOT repeat these. Remaining budget: {MAX_TURNS - turn} actions."
+            f" Inspected: {inspected}. Plugins run: {already_run_plugins}."
+            f" Do NOT repeat. Budget left: {MAX_TURNS - turn}."
         )
 
-        send_history = history[-6:] if len(history) > 6 else history[:]
-        send_history = [h.copy() for h in send_history]
-        send_history[-1]["content"] += reminder
+        # keep system + first user + last 4 turns only
+        send = messages[:2] + messages[-4:] if len(messages) > 6 else messages[:]
+        send = [m.copy() for m in send]
+        send[-1]["content"] += reminder
 
-        messages = [{"role": "system", "content": system_prompt}] + send_history
-
-        raw = cached_llm_call(messages)
-        history.append({"role": "assistant", "content": raw})
+        raw = cached_llm_call(send)
+        messages.append({"role": "assistant", "content": raw})
 
         try:
             act = strip_json(raw)
         except json.JSONDecodeError:
-            history.append({"role": "user", "content": "Invalid JSON. One valid JSON action only, no markdown."})
+            messages.append({"role": "user", "content": "Invalid JSON. One JSON action only."})
             continue
 
         print(f"[turn {turn}] {act.get('action')} {act.get('evidence_id') or act.get('plugin') or ''}")
@@ -108,7 +107,7 @@ def investigate(image, store, system_prompt):
             else:
                 filter_key = f"{eid}:{act['key']}={act['value']}"
                 if filter_key in inspected:
-                    result = {"error": f"Already filtered {eid} by {act['key']}={act['value']}. Move on."}
+                    result = {"error": f"Already filtered {eid}. Move on."}
                 else:
                     inspected.append(filter_key)
                     result = filter_rows(ev, act["key"], act["value"], max_rows=10)
@@ -116,7 +115,7 @@ def investigate(image, store, system_prompt):
         elif act["action"] == "run_plugin":
             plugin_name = act["plugin"]
             if plugin_name in already_run_plugins:
-                result = {"error": f"Plugin '{plugin_name}' already run. Use inspect or filter on existing evidence."}
+                result = {"error": f"Plugin '{plugin_name}' already run. Use inspect or filter."}
             else:
                 ev = run_vol(image, plugin_name, act.get("pid"))
                 store.add(ev)
@@ -126,10 +125,9 @@ def investigate(image, store, system_prompt):
         else:
             result = {"error": "unknown action"}
 
-        history.append({"role": "user", "content": json.dumps(result)})
+        messages.append({"role": "user", "content": json.dumps(result)})
 
-    history.append({"role": "user", "content": "Budget exhausted. Finalize now with findings JSON."})
-    send_history = history[-6:] if len(history) > 6 else history
-    messages = [{"role": "system", "content": system_prompt}] + send_history
-    raw = cached_llm_call(messages)
+    messages.append({"role": "user", "content": "Budget exhausted. Finalize now with findings JSON."})
+    send = messages[:2] + messages[-4:] if len(messages) > 6 else messages
+    raw = cached_llm_call(send)
     return strip_json(raw)["findings"]
