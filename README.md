@@ -18,7 +18,7 @@
 
 ## Demo Video
 
-[\[INSERT YOUTUBE LINK HERE\]](https://youtu.be/rTGfSVvpBLg)
+[\[DFIR Autonomous Investigation Agent — AI Memory Forensics with Self-Verification\]](https://youtu.be/rTGfSVvpBLg)
 
 The video shows: the dataset, the dual-agent architecture, a live run of the pipeline, the verifier independently rejecting unsupported findings (self-correction), the traceable HTML report, and an honest walkthrough of current limitations.
 
