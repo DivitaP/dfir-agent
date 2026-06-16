@@ -18,7 +18,7 @@
 
 ## Demo Video
 
-[\[DFIR Autonomous Investigation Agent — AI Memory Forensics with Self-Verification\]](https://youtu.be/rTGfSVvpBLg)
+[DFIR Autonomous Investigation Agent — AI Memory Forensics with Self-Verification](https://youtu.be/rTGfSVvpBLg)
 
 The video shows: the dataset, the dual-agent architecture, a live run of the pipeline, the verifier independently rejecting unsupported findings (self-correction), the traceable HTML report, and an honest walkthrough of current limitations.
 
@@ -43,6 +43,10 @@ The agent takes a raw memory dump, runs a structured set of Volatility 3 plugins
 ## Architecture
 
 ![Architecture Diagram](./docs/architecture.png)
+
+**Architectural pattern:** Multi-Agent Framework — independent investigator and verifier agents.
+
+**Guardrails:** Architectural, not prompt-based. The agent can only invoke read-only Volatility plugins through a fixed executor interface; no code path exposes write access to the source image or the evidence store. The verifier independently re-checks every cited evidence ID, so unsupported claims are blocked structurally rather than by instruction.
 
 ```
 Memory Image (.raw)
@@ -117,6 +121,8 @@ The investigator currently runs on the lightweight `llama-3.1-8b-instant` model 
 | Overclaimed correlation | Claimed one PID in both malfind and netscan; evidence showed multiple uncorrelated PIDs | REJECTED — verifier checked against raw rows |
 | Redundant tool calls | Agent attempted to re-run already-executed plugins | BLOCKED at code level before the LLM call |
 | Investigator looping | 8B model repeats filter actions across turns | Known issue, tracked in limitations |
+
+Evidence integrity: The memory image is treated as a read-only input. Volatility 3 reads the image and never writes to it; all output goes to a separate evidence/ directory. The agent has no write path to the source image or the evidence store — it can only request read-only plugin executions and cite evidence IDs through a fixed executor interface. This is an architectural guardrail, not a prompt instruction: if the agent attempts anything outside the defined actions (inspect, filter, run_plugin, finalize), the action is rejected by the dispatch logic and returned as an error, not executed. There is no code path through which the agent can modify original evidence.
 
 **Honesty over perfection:** all rejection events are preserved in `evidence/verified.json` and displayed in the report under "Rejected Findings — Caught by Verifier." A clean report with no rejections would indicate the verifier is not working, not that the agent is perfect.
 
