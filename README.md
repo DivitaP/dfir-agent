@@ -164,6 +164,8 @@ git clone https://github.com/DivitaP/dfir-agent.git
 cd dfir-agent
 python3 -m venv venv && source venv/bin/activate
 pip install volatility3 groq
+//OR
+pip install -r requirements.txt
 export GROQ_API_KEY="your-groq-api-key"
 ```
 
